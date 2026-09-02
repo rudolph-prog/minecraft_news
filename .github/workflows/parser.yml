@@ -1,0 +1,63 @@
+name: Universal TG News Parser
+on:
+  schedule:
+    - cron: '*/15 * * * *' # Проверка каждые 15 минут
+  workflow_dispatch: # Кнопка для ручного запуска
+
+jobs:
+  parse:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Fetch and format last TG post
+        run: |
+          # === НАСТРОЙКА КАНАЛА ===
+          # Успешно установлен юзернейм нового канала Топор!
+          TARGET_CHANNEL="zhest_tresh_videoj"
+          
+          # Скачиваем веб-версию ленты выбранного канала
+          curl -s -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" "https://t.me" > tg.html
+          
+          # Универсальный сборщик текста поста на Python
+          python3 -c "
+          import re
+          import html
+          
+          try:
+              with open('tg.html', 'r', encoding='utf-8') as f:
+                  content = f.read()
+              
+              # Ищем абсолютно все блоки с текстом постов на странице
+              posts = re.findall(r'<div class=\"tgme_widget_message_text[^>]*\">(.*?)</div>', content, re.DOTALL)
+              
+              if posts:
+                  # Берем самый последний (свежий) post из списка
+                  last_post = posts[-1]
+                  
+                  # Заменяем HTML-переносы строк <br/> на обычные \n
+                  clean_text = re.sub(r'<br\s*/?>', '\n', last_post)
+                  # Вырезаем все остальные жирные, курсивные и ссылочные HTML-теги
+                  clean_text = re.sub(r'<[^>]+>', '', clean_text)
+                  # Декодируем веб-символы (например, &quot; превратится в обычные кавычки)
+                  final_text = html.unescape(clean_text).strip()
+                  
+                  with open('news.txt', 'w', encoding='utf-8') as out:
+                      out.write(final_text)
+                  print('Success: Post from ' + '$TARGET_CHANNEL' + ' saved!')
+              else:
+                  with open('news.txt', 'w', encoding='utf-8') as out:
+                      out.write('Ошибка: Текстовых постов в этом канале не найдено.')
+          except Exception as e:
+              with open('news.txt', 'w', encoding='utf-8') as out:
+                  out.write('Ошибка парсинга: ' + str(e))
+          "
+
+      - name: Commit and Push changes
+        run: |
+          git config --global user.name "TG-Parser-Bot"
+          git config --global user.email "bot@github.com"
+          git add news.txt
+          git diff-index --quiet HEAD || git commit -m "Автообновление новости из ТГ"
+          git push
