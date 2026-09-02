@@ -17,9 +17,9 @@ jobs:
           TARGET_CHANNEL="zhest_tresh_videoj"
           
           # Скачиваем веб-версию ленты выбранного канала
-          curl -s -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" "https://t.me" > tg.html
+          curl -s -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64); (KHTML, like Gecko)" "https://t.me" > tg.html
           
-          # Универсальный сборщик текста на Python (ищет тексты и медиа-подписи)
+          # Бронебойный сборщик текста на Python
           python3 -c "
           import re
           import html
@@ -28,30 +28,40 @@ jobs:
               with open('tg.html', 'r', encoding='utf-8') as f:
                   content = f.read()
               
-              # Регулярка ищет как обычный текст, так и подписи к фото/видео (tgme_widget_message_text)
-              posts = re.findall(r'class=\"tgme_widget_message_text[^>]*\">(.*?)</div>', content, re.DOTALL)
+              # Ищем абсолютно все открывающие теги текстовых блоков в ТГ
+              matches = list(re.finditer(r'class=\"[^\"]*tgme_widget_message_text[^\"]*\">', content))
               
-              if posts:
-                  # Берем самый последний свежий пост (даже если это подпись к фото)
-                  last_post = posts[-1]
+              if matches:
+                  # Берем самый последний (свежий) пост
+                  last_match = matches[-1]
+                  start_pos = last_match.end()
                   
-                  # Переводим веб-брейки <br/> в понятные Майнкрафту переносы строк \n
-                  clean_text = re.sub(r'<br\s*/?>', '\n', last_post)
-                  # Счищаем все ссылки, жирный шрифт и прочие HTML-теги
-                  clean_text = re.sub(r'<[^>]+>', '', clean_text)
-                  # Убираем лишние пробелы и декодируем спецсимволы
-                  final_text = html.unescape(clean_text).strip()
+                  # Ищем закрывающий тег именно для этого блока
+                  end_pos = content.find('</div>', start_pos)
                   
-                  if final_text:
-                      with open('news.txt', 'w', encoding='utf-8') as out:
-                          out.write(final_text)
-                      print('Success: Media-caption or Text from ' + '$TARGET_CHANNEL' + ' saved!')
+                  if end_pos != -1:
+                      raw_post = content[start_pos:end_pos]
+                      
+                      # Переводим HTML-переносы строк <br/> в обычные \n
+                      clean_text = re.sub(r'<br\s*/?>', '\n', raw_post)
+                      # Счищаем вообще все остальные HTML-теги и скрытый мусор
+                      clean_text = re.sub(r'<[^>]+>', '', clean_text)
+                      # Декодируем веб-символы
+                      final_text = html.unescape(clean_text).strip()
+                      
+                      if final_text:
+                          with open('news.txt', 'w', encoding='utf-8') as out:
+                              out.write(final_text)
+                          print('Success! Post text saved.')
+                      else:
+                          with open('news.txt', 'w', encoding='utf-8') as out:
+                              out.write('Пост содержит только медиафайл без текста.')
                   else:
                       with open('news.txt', 'w', encoding='utf-8') as out:
-                          out.write('Пост содержит только медиафайл без описания.')
+                          out.write('Ошибка разметки: закрывающий тег не найден.')
               else:
                   with open('news.txt', 'w', encoding='utf-8') as out:
-                      out.write('Ошибка: Сообщения на канале не обнаружены.')
+                      out.write('Посты на канале временно не обнаружены. Повтор...')
           except Exception as e:
               with open('news.txt', 'w', encoding='utf-8') as out:
                   out.write('Ошибка парсинга: ' + str(e))
@@ -62,5 +72,5 @@ jobs:
           git config --global user.name "TG-Parser-Bot"
           git config --global user.email "bot@github.com"
           git add news.txt
-          git diff-index --quiet HEAD || git commit -m "Автообновление медиа-новости из ТГ"
+          git diff-index --quiet HEAD || git commit -m "Исправление парсера текста"
           git push
