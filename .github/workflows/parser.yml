@@ -1,8 +1,8 @@
 name: Universal TG News Parser
 on:
   schedule:
-    - cron: '*/15 * * * *' # Проверка каждые 15 минут
-  workflow_dispatch: # Кнопка для ручного запуска
+    - cron: '*/15 * * * *' # Авто-проверка каждые 15 минут
+  workflow_dispatch: # Кнопка ручного пинка
 
 jobs:
   parse:
@@ -16,55 +16,52 @@ jobs:
           # === НАСТРОЙКА КАНАЛА ===
           TARGET_CHANNEL="zhest_tresh_videoj"
           
-          # Скачиваем веб-версию ленты выбранного канала
-          curl -s -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64); (KHTML, like Gecko)" "https://t.me" > tg.html
+          # Скачиваем через специальный RSS-обходчик, который телеграм никогда не блокирует
+          curl -s -L "https://i-c-a.su" > tg_feed.xml
           
-          # Бронебойный сборщик текста на Python
+          # Железобетонный парсер текста на Python
           python3 -c "
           import re
           import html
           
           try:
-              with open('tg.html', 'r', encoding='utf-8') as f:
+              with open('tg_feed.xml', 'r', encoding='utf-8') as f:
                   content = f.read()
               
-              # Ищем абсолютно все открывающие теги текстовых блоков в ТГ
-              matches = list(re.finditer(r'class=\"[^\"]*tgme_widget_message_text[^\"]*\">', content))
+              # Вытаскиваем текст поста из блока описания RSS
+              post_match = re.search(r'<description><!\[CDATA\[(.*?)(?:\]\]>|</description>)', content, re.DOTALL)
               
-              if matches:
-                  # Берем самый последний (свежий) пост
-                  last_match = matches[-1]
-                  start_pos = last_match.end()
+              if post_match:
+                  raw_post = post_match.group(1)
                   
-                  # Ищем закрывающий тег именно для этого блока
-                  end_pos = content.find('</div>', start_pos)
+                  # Превращаем веб-переносы <br> в обычные \n для Майнкрафта
+                  clean_text = re.sub(r'<br\s*/?>', '\n', raw_post)
+                  # Вырезаем абсолютно все остальные ссылки и теги
+                  clean_text = re.sub(r'<[^>]+>', '', clean_text)
+                  # Декодируем спецсимволы текста
+                  final_text = html.unescape(clean_text).strip()
                   
-                  if end_pos != -1:
-                      raw_post = content[start_pos:end_pos]
-                      
-                      # Переводим HTML-переносы строк <br/> в обычные \n
-                      clean_text = re.sub(r'<br\s*/?>', '\n', raw_post)
-                      # Счищаем вообще все остальные HTML-теги и скрытый мусор
-                      clean_text = re.sub(r'<[^>]+>', '', clean_text)
-                      # Декодируем веб-символы
-                      final_text = html.unescape(clean_text).strip()
-                      
-                      if final_text:
-                          with open('news.txt', 'w', encoding='utf-8') as out:
-                              out.write(final_text)
-                          print('Success! Post text saved.')
-                      else:
-                          with open('news.txt', 'w', encoding='utf-8') as out:
-                              out.write('Пост содержит только медиафайл без текста.')
+                  if final_text:
+                      with open('news.txt', 'w', encoding='utf-8') as out:
+                          out.write(final_text)
+                      print('Успешно! Текст новости сохранен.')
                   else:
                       with open('news.txt', 'w', encoding='utf-8') as out:
-                          out.write('Ошибка разметки: закрывающий тег не найден.')
+                          out.write('Последний пост содержит только картинку без подписи.')
               else:
-                  with open('news.txt', 'w', encoding='utf-8') as out:
-                      out.write('Посты на канале временно не обнаружены. Повтор...')
+                  # Резервный поиск по стандартным тегам, если шлюз выдал альтернативный формат
+                  alt_match = re.search(r'<description>(.*?)</description>', content, re.DOTALL)
+                  if alt_match:
+                      clean_text = re.sub(r'<[^>]+>', '', alt_match.group(1))
+                      final_text = html.unescape(clean_text).strip()
+                      with open('news.txt', 'w', encoding='utf-8') as out:
+                          out.write(final_text)
+                  else:
+                      with open('news.txt', 'w', encoding='utf-8') as out:
+                          out.write('Новости временно обновляются, подождите...')
           except Exception as e:
               with open('news.txt', 'w', encoding='utf-8') as out:
-                  out.write('Ошибка парсинга: ' + str(e))
+                  out.write('Ошибка чтения ленты: ' + str(e))
           "
 
       - name: Commit and Push changes
@@ -72,5 +69,5 @@ jobs:
           git config --global user.name "TG-Parser-Bot"
           git config --global user.email "bot@github.com"
           git add news.txt
-          git diff-index --quiet HEAD || git commit -m "Исправление парсера текста"
+          git diff-index --quiet HEAD || git commit -m "Автообновление через RSS-ленту"
           git push
